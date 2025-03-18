@@ -112,6 +112,13 @@ def get_kernel_uri(kernel_path: str) -> str:
 
 
 @dataclass
+class XenBootSpec:
+    xenEfi: str
+    xenMultiboot: str
+    xenVersion: str
+    xenParams: List[str]
+
+@dataclass
 class BootSpec:
     system: str
     init: str
@@ -120,18 +127,41 @@ class BootSpec:
     label: str
     toplevel: str
     specialisations: Dict[str, "BootSpec"]
+    xen: XenBootSpec
     initrd: str | None = None
     initrdSecrets: str | None = None
-
 
 def bootjson_to_bootspec(bootjson: dict) -> BootSpec:
     specialisations = bootjson['org.nixos.specialisation.v1']
     specialisations = {k: bootjson_to_bootspec(v) for k, v in specialisations.items()}
+    xen = bootjson['org.xenproject.bootspec.v1']
     return BootSpec(
         **bootjson['org.nixos.bootspec.v1'],
         specialisations=specialisations,
+        xen=xen,
     )
 
+def xen_config_entry(levels: int, bootspec: BootSpec, label: str, time: str, efi: bool) -> str:
+    entry = '/' * levels + label + '\n'
+    entry += f'comment: {bootspec.label}, built on {time}\n'
+    # load Xen dom0 as the executable 
+    if efi:
+        entry += 'protocol: multiboot2\n'
+        entry += 'path: ' + get_copied_path_uri(bootspec.xen['xenEfi'], "xen") + '\n'
+    else:
+        entry += 'protocol: multiboot\n'
+        entry += 'path: ' + get_copied_path_uri(bootspec.xen['xenMultiboot'], "xen") + '\n'
+    # set xenParams as the executable's parameters
+    if "xenParams" in bootspec.xen and len(bootspec.xen['xenParams']) > 0:
+        entry += 'cmdline: -- ' + ' '.join(bootspec.xen['xenParams']).strip() + '\n'
+    # load the linux kernel as the second module
+    entry += 'module_path: ' + get_kernel_uri(bootspec.kernel) + '\n'
+    # set kernel parameters as the parameters to the first module
+    entry += 'module_string: -- ' + ' '.join(['init=' + bootspec.init] + bootspec.kernelParams).strip() + '\n'
+    if bootspec.initrd:
+        # the final module is the initrd
+        entry += 'module_path: ' + get_kernel_uri(bootspec.initrd) + '\n'
+    return entry
 
 def config_entry(levels: int, bootspec: BootSpec, label: str, time: str) -> str:
     entry = '/' * levels + label + '\n'
@@ -168,7 +198,15 @@ def generate_config_entry(profile: str, gen: str) -> str:
     boot_json = json.load(open(os.path.join(get_system_path(profile, gen), 'boot.json'), 'r'))
     boot_spec = bootjson_to_bootspec(boot_json)
 
-    entry = config_entry(2, boot_spec, f'Generation {gen}', time)
+    # Xen, if configured, should be listed first for each generation
+    entry = ''
+    if boot_spec.xen and 'xenVersion' in boot_spec.xen:
+        xen_version = boot_spec.xen['xenVersion']
+        if config('efiSupport') and 'xenEfi' in boot_spec.xen:
+            entry += xen_config_entry(2, boot_spec, f'Xen EFI {xen_version} Generation {gen}', time, True)
+        if config('biosSupport') and 'xenMultiboot' in boot_spec.xen:
+            entry += xen_config_entry(2, boot_spec, f'Xen {xen_version} Generation {gen}', time, False)
+    entry += config_entry(2, boot_spec, f'Generation {gen}', time)
     for spec in boot_spec.specialisations:
         entry += config_entry(2, boot_spec, f'Generation {gen}, Specialisation {spec}', str(time))
     return entry

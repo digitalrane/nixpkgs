@@ -39,6 +39,12 @@ let
 
   cfg = config.virtualisation.xen;
 
+  biosBootEnabled = config.boot.loader.limine.enable && config.boot.loader.limine.biosSupport;
+  efiBootEnabled =
+    config.boot.loader.systemd-boot.enable
+    || (config.boot.loader.limine.enable && !config.boot.loader.limine.biosSupport)
+    || (config.boot ? lanzaboote) && config.boot.lanzaboote.enable;
+
   xenBootBuilder = pkgs.writeShellApplication {
     name = "xenBootBuilder";
     runtimeInputs =
@@ -51,7 +57,7 @@ let
         gnused
         jq
       ])
-      ++ optionals (cfg.efi.bootBuilderVerbosity == "info") (
+      ++ optionals (cfg.boot.builderVerbosity == "info") (
         with pkgs;
         [
           bat
@@ -59,6 +65,8 @@ let
         ]
       );
     runtimeEnv = {
+      biosBoot = cfg.biosBoot.enable;
+      efiBoot = cfg.efiBoot.enable;
       efiMountPoint = config.boot.loader.efi.efiSysMountPoint;
     };
 
@@ -66,6 +74,8 @@ let
     excludeShellChecks = [ "SC2016" ];
 
     text = readFile ./xen-boot-builder.sh;
+
+    efiMountPoint = config.boot.loader.efi.efiSysMountPoint;
   };
 in
 
@@ -146,6 +156,61 @@ in
         "path"
       ]
     )
+    (mkRenamedOptionModule
+      [
+        "virtualisation"
+        "xen"
+        "efi"
+        "bootBuilderVerbosity"
+      ]
+      [
+        "virtualisation"
+        "xen"
+        "boot"
+        "builderVerbosity"
+      ]
+    )
+    (mkRenamedOptionModule
+      [
+        "virtualisation"
+        "xen"
+        "efi"
+        "trace"
+      ]
+      [
+        "virtualisation"
+        "xen"
+        "boot"
+        "trace"
+      ]
+    )
+    (mkRenamedOptionModule
+      [
+        "virtualisation"
+        "xen"
+        "bootParams"
+      ]
+      [
+        "virtualisation"
+        "xen"
+        "boot"
+        "params"
+      ]
+    )
+    (mkRenamedOptionModule
+      [
+        "virtualisation"
+        "xen"
+        "efi"
+        "path"
+      ]
+      [
+        "virtualisation"
+        "xen"
+        "efiBoot"
+        "path"
+      ]
+    )
   ];
 
   ## Interface ##
@@ -178,25 +243,31 @@ in
       };
     };
 
-    bootParams = mkOption {
-      default = [ ];
-      example = ''
-        [
-          "iommu=force:true,qinval:true,debug:true"
-          "noreboot=true"
-          "vga=ask"
-        ]
-      '';
-      type = listOf str;
-      description = ''
-        Xen Command Line parameters passed to Domain 0 at boot time.
-        Note: these are different from `boot.kernelParams`. See
-        the [Xen documentation](https://xenbits.xenproject.org/docs/unstable/misc/xen-command-line.html) for more information.
-      '';
-    };
-
-    efi = {
-      bootBuilderVerbosity = mkOption {
+    boot = {
+      params = mkOption {
+        default = [ ];
+        example = ''
+          [
+            "iommu=force:true,qinval:true,debug:true"
+            "noreboot=true"
+            "vga=ask"
+          ]
+        '';
+        type = listOf str;
+        description = ''
+          Xen Command Line parameters passed to Domain 0 at boot time.
+          Note: these are different from `boot.kernelParams`. See
+          the [Xen documentation](https://xenbits.xenproject.org/docs/unstable/misc/xen-command-line.html) for more information.
+        '';
+      };
+      trace = mkOption {
+        type = bool;
+        default = cfg.debug;
+        defaultText = literalExpression "false";
+        example = true;
+        description = "Whether to enable Xen debug tracing and logging for Domain 0.";
+      };
+      builderVerbosity = mkOption {
         type = enum [
           "default"
           "info"
@@ -206,7 +277,7 @@ in
         default = "default";
         example = "info";
         description = ''
-          The EFI boot entry builder script should be called with exactly one of the following arguments in order to specify its verbosity:
+          The boot entry builder script should be called with exactly one of the following arguments in order to specify its verbosity:
 
           - `quiet` supresses all messages.
 
@@ -220,7 +291,15 @@ in
           This option does not alter the actual functionality of the script, just the number of messages printed when rebuilding the system.
         '';
       };
+    };
 
+    efiBoot = {
+      enable = mkOption {
+        type = bool;
+        default = true; 
+        example = true;
+        description = "Whether to enable EFI boot. If not specified, will be detected.";
+      };
       path = mkOption {
         type = path;
         default = "${cfg.package.boot}/${cfg.package.efi}";
@@ -231,6 +310,26 @@ in
           on `$boot/boot/xen.efi`, but an unpatched Xen build may install it
           somewhere else, such as `$out/boot/efi/efi/nixos/xen.efi`. Unless
           you're building your own Xen derivation, you should leave this
+          option as the default value.
+        '';
+      };
+    };
+
+    biosBoot = {
+      enable = mkOption {
+        type = bool;
+        default = false; 
+        example = true;
+        description = "Whether to enable BIOS-based boot.";
+      };
+      path = mkOption {
+        type = path;
+        default = "${cfg.package.boot}/${cfg.package.multiboot}";
+        defaultText = literalExpression "\${config.virtualisation.xen.package.boot}/\${config.virtualisation.xen.package.multiboot}";
+        example = literalExpression "\${config.virtualisation.xen.package}/boot/xen-\${config.virtualisation.xen.package.version}";
+        description = ''
+          Path to the xen multiboot binary used for BIOS booting.
+          Unless you're building your own Xen derivation, you should leave this
           option as the default value.
         '';
       };
@@ -610,10 +709,12 @@ in
         message = "Xen is currently not supported on ${pkgs.stdenv.hostPlatform.system}.";
       }
       {
-        assertion =
-          config.boot.loader.systemd-boot.enable
-          || (config.boot ? lanzaboote) && config.boot.lanzaboote.enable;
-        message = "Xen only supports booting on systemd-boot or Lanzaboote.";
+        assertion = cfg.efiBoot.enable || cfg.biosBoot.enable;
+        message = "Either efiBoot.enable or biosBoot.enable must be enabled";
+      }
+      {
+        assertion = (efiBootEnabled && cfg.efiBoot.enable) || (biosBootEnabled && cfg.biosBoot.enable);
+        message = "Either EFI boot or BIOS boot support must be enabled, with supported bootloader configuration"; 
       }
       {
         assertion = config.boot.initrd.systemd.enable;
@@ -639,7 +740,7 @@ in
       }
     ];
 
-    virtualisation.xen.bootParams =
+    virtualisation.xen.boot.params =
       optionals cfg.trace [
         "loglvl=all"
         "guest_loglvl=all"
@@ -692,17 +793,19 @@ in
       '';
 
       # Xen Bootspec extension. This extension allows NixOS bootloaders to
-      # fetch the `xen.efi` path and access the `cfg.bootParams` option.
+      # fetch the dom0 kernel paths and access the `cfg.boot.params` option.
       bootspec.extensions = {
         "org.xenproject.bootspec.v1" = {
-          xen = cfg.efi.path;
-          xenParams = cfg.bootParams;
+          xenEfi = cfg.efiBoot.path;
+          xenMultiboot = cfg.biosBoot.path;
+          xenVersion = cfg.package.version;
+          xenParams = cfg.boot.params;
         };
       };
 
       # See the `xenBootBuilder` script in the main `let...in` statement of this file.
       loader.systemd-boot.extraInstallCommands = ''
-        ${getExe xenBootBuilder} ${cfg.efi.bootBuilderVerbosity}
+        ${getExe xenBootBuilder} ${cfg.boot.builderVerbosity}
       '';
     };
 
