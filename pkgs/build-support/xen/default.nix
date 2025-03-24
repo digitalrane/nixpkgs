@@ -259,7 +259,6 @@ stdenv.mkDerivation (finalAttrs: {
     cp -prvd dist/install/etc $out
     find dist/install/boot -type f -name '*.gz' -print -exec gunzip -k '{}' ';'
     cp -prvd dist/install/boot $boot
- 
     runHook postInstall
   '';
 

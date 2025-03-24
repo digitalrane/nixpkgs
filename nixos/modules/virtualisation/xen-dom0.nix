@@ -296,7 +296,7 @@ in
     efiBoot = {
       enable = mkOption {
         type = bool;
-        default = true; 
+        default = true;
         example = true;
         description = "Whether to enable EFI boot. If not specified, will be detected.";
       };
@@ -318,7 +318,7 @@ in
     biosBoot = {
       enable = mkOption {
         type = bool;
-        default = false; 
+        default = false;
         example = true;
         description = "Whether to enable BIOS-based boot.";
       };
@@ -714,7 +714,7 @@ in
       }
       {
         assertion = (efiBootEnabled && cfg.efiBoot.enable) || (biosBootEnabled && cfg.biosBoot.enable);
-        message = "Either EFI boot or BIOS boot support must be enabled, with supported bootloader configuration"; 
+        message = "Either EFI boot or BIOS boot support must be enabled, with supported bootloader configuration";
       }
       {
         assertion = config.boot.initrd.systemd.enable;
@@ -796,10 +796,10 @@ in
       # fetch the dom0 kernel paths and access the `cfg.boot.params` option.
       bootspec.extensions = {
         "org.xenproject.bootspec.v1" = {
-          xenEfi = cfg.efiBoot.path;
-          xenMultiboot = cfg.biosBoot.path;
-          xenVersion = cfg.package.version;
-          xenParams = cfg.boot.params;
+          efiPath = cfg.efiBoot.path;
+          multibootPath = cfg.biosBoot.path;
+          version = cfg.package.version;
+          params = cfg.boot.params;
         };
       };
 
