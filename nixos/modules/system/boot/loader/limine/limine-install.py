@@ -115,6 +115,8 @@ def get_kernel_uri(kernel_path: str) -> str:
 
 @dataclass
 class XenBootSpec:
+    """Represent the bootspec extension for Xen dom0 kernels"""
+
     xenEfi: str
     xenMultiboot: str
     xenVersion: str
@@ -143,26 +145,57 @@ def bootjson_to_bootspec(bootjson: dict) -> BootSpec:
         xen=xen,
     )
 
-def xen_config_entry(levels: int, bootspec: BootSpec, label: str, time: str, efi: bool) -> str:
-    entry = '/' * levels + label + '\n'
-    entry += f'comment: {bootspec.label}, built on {time}\n'
-    # load Xen dom0 as the executable 
-    if efi:
-        entry += 'protocol: multiboot2\n'
-        entry += 'path: ' + get_copied_path_uri(bootspec.xen['xenEfi'], "xen") + '\n'
-    else:
-        entry += 'protocol: multiboot\n'
-        entry += 'path: ' + get_copied_path_uri(bootspec.xen['xenMultiboot'], "xen") + '\n'
-    # set xenParams as the executable's parameters
-    if "xenParams" in bootspec.xen and len(bootspec.xen['xenParams']) > 0:
-        entry += 'cmdline: -- ' + ' '.join(bootspec.xen['xenParams']).strip() + '\n'
+def xen_config_entry(
+    levels: int, bootspec: BootSpec, xenVersion: str, gen: str, time: str
+) -> str:
+    """Generate EFI and BIOS entries for Xen dom0 kernels.
+
+    Arguments:
+    levels -- The number of Limine menu levels for entries
+    bootspec -- The NixOS BootSpec used for generating this Limine configuration
+    xenVersion -- The version of Xen the entry is generated for, from the boot extension
+    gen -- The system generation these entries are generated for
+    time -- The build time for the configuration
+    """
+    entry = ""
+    # generate entry common header for both BIOS and EFI entries
+    entry_header = "/" * levels + label + "\n"
+    entry_header += f"comment: {bootspec.label}, built on {time}\n"
+    # generate entry common footer for both BIOS and EFI entries
+    entry_footer = ""
+    # set xenParams as the multiboot executable's parameters
+    if "xenParams" in bootspec.xen and len(bootspec.xen["xenParams"]) > 0:
+        # TODO: Understand why the first argument is ignored below?
+        # --- to work around first argument being ignored
+        entry_footer += (
+            "cmdline: -- " + " ".join(bootspec.xen["xenParams"]).strip() + "\n"
+        )
     # load the linux kernel as the second module
-    entry += 'module_path: ' + get_kernel_uri(bootspec.kernel) + '\n'
+    entry_footer += "module_path: " + get_kernel_uri(bootspec.kernel) + "\n"
     # set kernel parameters as the parameters to the first module
-    entry += 'module_string: -- ' + ' '.join(['init=' + bootspec.init] + bootspec.kernelParams).strip() + '\n'
+    # TODO: Understand why the first argument is ignored below?
+    # --- to work around first argument being ignored
+    entry_footer += (
+        "module_string: -- "
+        + " ".join(["init=" + bootspec.init] + bootspec.kernelParams).strip()
+        + "\n"
+    )
     if bootspec.initrd:
         # the final module is the initrd
-        entry += 'module_path: ' + get_kernel_uri(bootspec.initrd) + '\n'
+        entry_footer += "module_path: " + get_kernel_uri(bootspec.initrd) + "\n"
+    # load Xen dom0 as the executable, generate entries for EFI and BIOS boot
+    if config("efiSupport") and "xenEfi" in boot_spec.xen:
+        entry += entry_header
+        entry += "protocol: multiboot2\n"
+        entry += "path: " + get_copied_path_uri(bootspec.xen["xenEfi"], "xen") + "\n"
+        entry += entry_footer
+    elif config("biosSupport") and "xenMultiboot" in boot_spec.xen:
+        entry += entry_header
+        entry += "protocol: multiboot\n"
+        entry += (
+            "path: " + get_copied_path_uri(bootspec.xen["xenMultiboot"], "xen") + "\n"
+        )
+        entry += entry_footer
     return entry
 
 def config_entry(levels: int, bootspec: BootSpec, label: str, time: str) -> str:
@@ -204,10 +237,7 @@ def generate_config_entry(profile: str, gen: str) -> str:
     entry = ''
     if boot_spec.xen and 'xenVersion' in boot_spec.xen:
         xen_version = boot_spec.xen['xenVersion']
-        if config('efiSupport') and 'xenEfi' in boot_spec.xen:
-            entry += xen_config_entry(2, boot_spec, f'Xen EFI {xen_version} Generation {gen}', time, True)
-        if config('biosSupport') and 'xenMultiboot' in boot_spec.xen:
-            entry += xen_config_entry(2, boot_spec, f'Xen {xen_version} Generation {gen}', time, False)
+        entry += xen_config_entry(2, boot_spec, xen_version, gen, time)
     entry += config_entry(2, boot_spec, f'Generation {gen}', time)
     for spec, spec_boot_spec in boot_spec.specialisations.items():
         entry += config_entry(2, spec_boot_spec, f'Generation {gen}, Specialisation {spec}', str(time))
