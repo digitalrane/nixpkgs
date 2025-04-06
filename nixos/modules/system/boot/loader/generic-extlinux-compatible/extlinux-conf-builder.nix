@@ -8,6 +8,7 @@ pkgs.replaceVarsWith {
       pkgs.coreutils
       pkgs.gnused
       pkgs.gnugrep
+      pkgs.jq
     ];
     inherit (pkgs) bash;
   };

@@ -92,8 +92,43 @@ addEntry() {
     timestamp=$(date "+%Y-%m-%d %H:%M" -d @$timestampEpoch)
     nixosLabel="$(cat $path/nixos-version)"
     extraParams="$(cat $path/kernel-params)"
+    bootspecFile="$path/boot.json"
 
     echo
+    # check for Xen
+    xenSpec=""
+    if grep -sq '"org.xenproject.bootspec.v2"' "$bootspecFile"; then
+	xenSpec="y"
+    fi
+
+    if [ "$tag" = "default" ]; then
+	echo "# Change this to e.g. nixos-42 to temporarily boot to an older configuration."
+	if [ -n "$xenSpec" ]; then
+	    echo "DEFAULT nixos-xen-default"
+	else
+	    echo "DEFAULT nixos-default"
+	fi
+	echo
+    fi
+
+    if [ -n "$xenSpec" ]; then
+        xenParams=$(jq -re ".\"org.xenproject.bootspec.v2\".params | join(\" \")" "$bootspecFile")
+        xenMultiboot=$(jq -re ".\"org.xenproject.bootspec.v2\".multibootPath" "$bootspecFile")
+        xenVersion=$(jq -re ".\"org.xenproject.bootspec.v2\".version" "$bootspecFile")
+
+	copyToKernelsDir "$xenMultiboot"; xen=$result
+
+	echo "LABEL nixos-xen-$tag"
+	if [ "$tag" = "default" ]; then
+            echo "  MENU LABEL NixOS with Xen $xenVersion - Default"
+	else
+            echo "  MENU LABEL NixOS with Xen $xenVersion - Configuration $tag ($timestamp - $nixosLabel)"
+	fi
+	echo "  KERNEL mboot.c32"
+	echo "  APPEND ../nixos/$(basename $xen) $xenParams --- ../nixos/$(basename $kernel) init=$path/init $extraParams --- ../nixos/$(basename $initrd)"
+	echo
+    fi
+
     echo "LABEL nixos-$tag"
     if [ "$tag" = "default" ]; then
         echo "  MENU LABEL NixOS - Default"
@@ -127,9 +162,6 @@ tmpFile="$target/extlinux/extlinux.conf.tmp.$$"
 
 cat > $tmpFile <<EOF
 # Generated file, all changes will be lost on nixos-rebuild!
-
-# Change this to e.g. nixos-42 to temporarily boot to an older configuration.
-DEFAULT nixos-default
 
 TIMEOUT $timeout
 EOF
