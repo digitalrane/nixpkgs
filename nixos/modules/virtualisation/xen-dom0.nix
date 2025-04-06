@@ -668,8 +668,9 @@ in
         assertion =
           config.boot.loader.systemd-boot.enable
           || (config.boot ? lanzaboote) && config.boot.lanzaboote.enable
-          || config.boot.loader.limine.enable;
-        message = "Xen only supports booting on systemd-boot, Lanzaboote or Limine.";
+          || config.boot.loader.limine.enable
+          || config.boot.loader.generic-extlinux-compatible;
+        message = "Xen only supports booting via systemd-boot, generic-extlinux-compatible, Lanzaboote or Limine.";
       }
       {
         assertion = config.boot.initrd.systemd.enable;
